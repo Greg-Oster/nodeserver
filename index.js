@@ -19,11 +19,30 @@ const PORT = process.env.PORT || 3000;
 const connectedClients = new Map();
 const requestHistory = [];
 
+// Store request rate data
+const requestRateData = {
+    timestamps: [],
+    counts: [],
+    lastCalculated: Date.now(),
+    // Initialize with some empty data points to avoid empty chart
+    initialize: function() {
+        const now = Math.floor(Date.now() / 1000);
+        for (let i = 0; i < 10; i++) {
+            this.timestamps.unshift(now - i);
+            this.counts.unshift(0);
+        }
+    }
+};
+
+// Initialize request rate data with empty points
+requestRateData.initialize();
+
 // Middleware to track request history
 app.use((req, res, next) => {
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
     const timestamp = moment().format('YYYY-MM-DD HH:mm:ss');
+    const now = Date.now();
 
     // Add to request history
     requestHistory.push({
@@ -36,6 +55,25 @@ app.use((req, res, next) => {
     // Keep only the last 100 requests
     if (requestHistory.length > 100) {
         requestHistory.shift();
+    }
+
+    // Calculate requests per second
+    const currentSecond = Math.floor(now / 1000);
+    const lastTimestampIndex = requestRateData.timestamps.indexOf(currentSecond);
+
+    if (lastTimestampIndex === -1) {
+        // This is a new second, add it to the array
+        requestRateData.timestamps.push(currentSecond);
+        requestRateData.counts.push(1);
+
+        // Keep only the last 60 seconds of data
+        if (requestRateData.timestamps.length > 60) {
+            requestRateData.timestamps.shift();
+            requestRateData.counts.shift();
+        }
+    } else {
+        // Increment the count for the current second
+        requestRateData.counts[lastTimestampIndex]++;
     }
 
     next();
@@ -59,11 +97,13 @@ app.get('/', (req, res) => {
             <meta charset="utf-8">
             <title>Мониторинг сервера</title>
             <script src="/socket.io/socket.io.js"></script>
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
                 body { font-family: Arial, sans-serif; margin: 20px; }
                 h1 { color: #333; }
                 .container { display: flex; flex-wrap: wrap; }
                 .section { margin: 10px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; flex: 1; min-width: 300px; }
+                .full-width { flex-basis: 100%; }
                 table { width: 100%; border-collapse: collapse; }
                 th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
                 th { background-color: #f2f2f2; }
@@ -73,6 +113,17 @@ app.get('/', (req, res) => {
                     0% { background-color: #ffff99; }
                     100% { background-color: transparent; }
                 }
+                .chart-container { 
+                    position: relative; 
+                    height: 250px; 
+                    width: 100%; 
+                }
+                .rps-value {
+                    font-size: 24px;
+                    font-weight: bold;
+                    text-align: center;
+                    margin: 10px 0;
+                }
             </style>
         </head>
         <body>
@@ -80,6 +131,14 @@ app.get('/', (req, res) => {
             <p><small>Данные обновляются в реальном времени</small></p>
 
             <div class="container">
+                <div class="section full-width">
+                    <h2>Запросы в секунду</h2>
+                    <div class="rps-value" id="current-rps">0 запросов/сек</div>
+                    <div class="chart-container">
+                        <canvas id="requestsChart"></canvas>
+                    </div>
+                </div>
+
                 <div class="section">
                     <h2>Информация о сервере</h2>
                     <table id="system-info">
@@ -136,6 +195,69 @@ app.get('/', (req, res) => {
             <script>
                 // Connect to the Socket.io server
                 const socket = io();
+                let requestsChart;
+
+                // Initialize the chart when the page loads
+                document.addEventListener('DOMContentLoaded', function() {
+                    const ctx = document.getElementById('requestsChart').getContext('2d');
+
+                    // Create gradient fill
+                    const gradient = ctx.createLinearGradient(0, 0, 0, 250);
+                    gradient.addColorStop(0, 'rgba(54, 162, 235, 0.6)');
+                    gradient.addColorStop(1, 'rgba(54, 162, 235, 0.1)');
+
+                    // Create the chart
+                    requestsChart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: [],
+                            datasets: [{
+                                label: 'Запросы в секунду',
+                                data: [],
+                                backgroundColor: gradient,
+                                borderColor: 'rgba(54, 162, 235, 1)',
+                                borderWidth: 2,
+                                tension: 0.3,
+                                pointRadius: 3,
+                                fill: true
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: true,
+                                    title: {
+                                        display: true,
+                                        text: 'Запросы/сек'
+                                    }
+                                },
+                                x: {
+                                    title: {
+                                        display: true,
+                                        text: 'Время'
+                                    }
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    display: false
+                                },
+                                tooltip: {
+                                    callbacks: {
+                                        label: function(context) {
+                                            return context.parsed.y + ' запросов/сек';
+                                        }
+                                    }
+                                }
+                            },
+                            animation: {
+                                duration: 500
+                            }
+                        }
+                    });
+                });
 
                 // Function to update an element and add the 'updated' class for animation
                 function updateElement(id, value) {
@@ -149,8 +271,26 @@ app.get('/', (req, res) => {
                     }
                 }
 
+                // Function to update the requests chart
+                function updateRequestsChart(data) {
+                    if (!requestsChart) return;
+
+                    // Update the current RPS value
+                    updateElement('current-rps', data.currentRPS + ' запросов/сек');
+
+                    // Update chart data
+                    requestsChart.data.labels = data.labels;
+                    requestsChart.data.datasets[0].data = data.values;
+                    requestsChart.update();
+                }
+
                 // Function to update system information
                 function updateSystemInfo(data) {
+                    // Update requests per second chart
+                    if (data.requestRateData) {
+                        updateRequestsChart(data.requestRateData);
+                    }
+
                     updateElement('cpu-count', data.cpuCount);
                     updateElement('cpu-usage', data.cpuUsage + '%');
                     updateElement('total-memory', data.totalMemory + ' GB');
@@ -211,6 +351,16 @@ function getSystemInfo(callback) {
     const freeMemory = os.freemem();
     const uptime = os.uptime();
 
+    // Format request rate data for the chart
+    const formattedRequestRateData = {
+        labels: requestRateData.timestamps.map(timestamp => {
+            return moment.unix(timestamp).format('HH:mm:ss');
+        }),
+        values: requestRateData.counts,
+        // Calculate current requests per second (average of last 5 seconds or available data)
+        currentRPS: calculateCurrentRPS()
+    };
+
     osUtils.cpuUsage((cpuUsage) => {
         const systemInfo = {
             cpuCount,
@@ -223,11 +373,23 @@ function getSystemInfo(callback) {
                 minutes: Math.floor((uptime % 3600) / 60)
             },
             connectedClients: Array.from(connectedClients.values()),
-            requestHistory: requestHistory.slice().reverse().slice(0, 10)
+            requestHistory: requestHistory.slice().reverse().slice(0, 10),
+            requestRateData: formattedRequestRateData
         };
 
         callback(systemInfo);
     });
+}
+
+// Function to calculate current requests per second (average of last 5 seconds or available data)
+function calculateCurrentRPS() {
+    const counts = requestRateData.counts;
+    if (counts.length === 0) return 0;
+
+    // Take the last 5 seconds or all available data if less than 5 seconds
+    const lastNSeconds = Math.min(5, counts.length);
+    const sum = counts.slice(-lastNSeconds).reduce((acc, val) => acc + val, 0);
+    return (sum / lastNSeconds).toFixed(2);
 }
 
 // Socket.io connection handling
