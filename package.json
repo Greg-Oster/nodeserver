@@ -1,11 +1,22 @@
 {
   "name": "mynodeserver",
   "version": "1.0.0",
-  "description": "",
+  "description": "A simple Node.js server for monitoring system information",
   "main": "index.js",
+  "engines": {
+    "node": ">=14.0.0"
+  },
   "scripts": {
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "private": true
+  "dependencies": {
+    "express": "^4.18.2",
+    "moment": "^2.29.4",
+    "os-utils": "^0.0.14"
+  },
+  "private": true,
+  "author": "",
+  "license": "ISC",
+  "keywords": ["node", "server", "monitoring"]
 }
