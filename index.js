@@ -1,5 +1,8 @@
 console.log('Happy developing ✨')
 
+// Load environment variables from .env file
+require('dotenv').config();
+
 const express = require('express');
 const os = require('os');
 const osUtils = require('os-utils');
@@ -194,6 +197,12 @@ app.get('/', (req, res) => {
     });
 });
 
+// About page route
+app.get('/about', (req, res) => {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send('<h1>О сервере</h1><p>Это простой сервер для мониторинга системной информации.</p>');
+});
+
 // Function to collect system information
 function getSystemInfo(callback) {
     const cpuCount = os.cpus().length;
@@ -260,5 +269,5 @@ setInterval(() => {
 }, 2000);
 
 server.listen(PORT, () => {
-    console.log(`Сервер запущен на порту ${PORT}`);
+    console.log(`Сервер запущен на порту ${PORT} в режиме ${process.env.NODE_ENV || 'development'}`);
 });
