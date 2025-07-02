@@ -12,23 +12,15 @@ const server = http.createServer(app);
 const io = new Server(server);
 const PORT = process.env.PORT || 3000;
 
-// Store connected clients
+// Store connected clients and request history
 const connectedClients = new Map();
 const requestHistory = [];
 
-// Middleware to track connected clients
+// Middleware to track request history
 app.use((req, res, next) => {
     const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
     const userAgent = req.headers['user-agent'];
     const timestamp = moment().format('YYYY-MM-DD HH:mm:ss');
-
-    // Add to connected clients
-    connectedClients.set(ip, {
-        ip,
-        userAgent,
-        lastSeen: timestamp,
-        url: req.url
-    });
 
     // Add to request history
     requestHistory.push({
@@ -233,6 +225,20 @@ function getSystemInfo(callback) {
 io.on('connection', (socket) => {
     console.log('A client connected');
 
+    // Store the client's IP address in the socket object
+    const clientIp = socket.handshake.headers['x-forwarded-for'] || socket.handshake.address;
+    const userAgent = socket.handshake.headers['user-agent'] || 'Unknown';
+    const timestamp = moment().format('YYYY-MM-DD HH:mm:ss');
+    socket.clientIp = clientIp;
+
+    // Add to connected clients
+    connectedClients.set(socket.id, {
+        ip: clientIp,
+        userAgent: userAgent,
+        lastSeen: timestamp,
+        url: socket.handshake.url || '/'
+    });
+
     // Send initial data
     getSystemInfo((data) => {
         socket.emit('systemInfo', data);
@@ -240,6 +246,9 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         console.log('A client disconnected');
+
+        // Remove the client from the connectedClients Map when they disconnect
+        connectedClients.delete(socket.id);
     });
 });
 
